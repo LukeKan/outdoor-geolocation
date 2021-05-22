@@ -46,7 +46,7 @@ def main():
     model = Backbone(classes=class_list, bs=128)
     train_df = pd.read_csv('dataset/google-landmark-v2/data/train.csv')
     train_tensors, train_target, valid_tensors, valid_target = model.get_dataset(train_df)
-    model.build()
+    model.build(len(train_target))
     model.compile()
     model.train(train_tensors, train_target, valid_tensors, valid_target)
 
