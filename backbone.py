@@ -4,7 +4,6 @@ from glob import glob
 import tensorflow as tf
 import pandas as pd
 import numpy as np
-import s2sphere
 from keras import layers
 from tensorflow.python.keras import Sequential
 from tensorflow.python.keras.applications.efficientnet import EfficientNetB0
@@ -16,7 +15,12 @@ from tensorflow.python.keras.optimizer_v2.adam import Adam
 from tensorflow.python.keras.preprocessing.image import ImageDataGenerator
 from keras.preprocessing import image
 from tqdm import tqdm
+from tensorflow._api.v2.compat.v1 import ConfigProto
+from tensorflow._api.v2.compat.v1 import InteractiveSession
 
+config = ConfigProto()
+config.gpu_options.allow_growth = True
+session = InteractiveSession(config=config)
 class Backbone:
     targets = []
     data_gen = {}
@@ -47,10 +51,10 @@ class Backbone:
         return np.vstack(list_of_tensors)
 
     def load_dataset(self, path, train_sample):
-        file_out = sorted(glob(path + '/*/*/*/*'))
+        file_out = sorted(glob(path + '/*'))
         file_out = np.array([s.replace("\\", "/") for s in file_out])
 
-        label_out = pd.Series(name="landmark_id")
+        label_out = pd.Series(name="classes")
 
         for file in file_out:
             filebase = os.path.basename(file)
@@ -66,8 +70,8 @@ class Backbone:
 
 
     def get_dataset(self, train_df):
-        train_path = 'dataset/google-landmark-v2/data/train'
-        valid_path = 'dataset/google-landmark-v2/data/train'
+        train_path = 'dataset/crawl/flickr/train'
+        valid_path = 'dataset/crawl/flickr/train'
         #test_path = './test_images/'
         train_file, train_target = self.load_dataset(train_path, train_df)
         valid_file, valid_target = train_file, train_target
@@ -77,18 +81,18 @@ class Backbone:
         #test_tensors = self.paths_to_tensor(test_file).astype('float32') / 255
         return train_tensors, train_target, valid_tensors, valid_target
 
-
-    def build(self, final_size):
+    def build(self, tags_size):
         input_shape = self.scale + (3,)
-        self.model = Sequential()
-        efficient_net = EfficientNetB0(include_top=True, weights='imagenet', input_shape=input_shape)
-        for layer in efficient_net.layers:
-            layer.trainable = False
-        self.model.add(efficient_net)
+        efficient_net = EfficientNetB0(include_top=False, weights='imagenet', input_shape=input_shape)
+        """for layer in efficient_net.layers:
+            layer.trainable = False"""
+        core = efficient_net.output
 
-        self.model.add(Flatten())
-        self.model.add(Dense(units=128, activation='relu'))
-        self.model.add(Dense(units=final_size, activation='softmax'))
+        core = tf.keras.layers.Dropout(0.5)(core)
+        core = tf.keras.layers.GlobalMaxPooling2D(name="gap")(core)
+        out_tags = tf.keras.layers.Dense(tags_size, activation='softmax')(core)
+        self.model = tf.keras.Model(inputs=efficient_net.input,
+                                    outputs=[out_tags])
 
         self.model.summary()
 
@@ -97,6 +101,9 @@ class Backbone:
         metrics = ['accuracy']
         self.model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
-    def train(self, train_tensors, train_target, valid_tensors, valid_target):
-        self.model.fit(train_tensors, train_target, validation_data=(valid_tensors, valid_target), epochs=60,
-                       verbose=1, batch_size=self.bs)
+    def train(self, train_ds,valid_ds):
+        callbacks = []
+        es_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
+        callbacks.append(es_callback)
+        self.model.fit(train_ds, validation_data=valid_ds, validation_steps=len(valid_ds), epochs=20, steps_per_epoch=500,
+                        batch_size=self.bs, callbacks=callbacks)

@@ -12,24 +12,24 @@ import sys
 key = 'c0204735d662efa8c73e187de7fec31f'
 secret = '11e1ce9d726f10fb'
 data_crawler = ['city'
-                , 'building'
+                #, 'building'
                 , 'countryside'
                 , 'landscape'
                 , 'mountain'
                 , 'woods'
-                , 'avenue'
+                #, 'avenue'
                 , 'highway'
                 , 'street'
                 , 'town'
                 , 'monument'
                 , 'glacier'
                 , 'parkway'
-                , 'lane'
-                , 'roadway'
-                , 'neighborhood'
-                , 'thoroughfare'
-                , 'motorway'
-]
+                #, 'lane'
+                #, 'roadway'
+                #, 'neighborhood'
+                #, 'thoroughfare'
+                #, 'motorway'
+                ]
 MAX_COUNT = 3000
 
 
@@ -45,7 +45,6 @@ def get_urls(image_tag, term, MAX_COUNT, csv_path, elems):
     start_date = 1580114633
     DELTA_DATE = 10364400
     while count < MAX_COUNT and completed is False and stop_counter < 3:
-        #time.sleep(2)
         try:
             photos = flickr.photos.search(text=term,
                                           tags=term,
@@ -74,7 +73,6 @@ def get_urls(image_tag, term, MAX_COUNT, csv_path, elems):
                         url = photo.get('url_m')
                         lat = photo.get('latitude')
                         long = photo.get('longitude')
-                        #print(elems['url'])
                         if url is not None and url not in elems['url']:
                             try:
                                 elems.loc[-1] = {'url': url,
@@ -82,9 +80,8 @@ def get_urls(image_tag, term, MAX_COUNT, csv_path, elems):
                                      'long': long,
                                      'tag': image_tag}
                                 c += 1
-                                elems.index +=1
+                                elems.index += 1
                                 elems.sort_index()
-                                #print(url)
                             except Exception as e:
                                 print(e)
                                 count -= 1
@@ -111,7 +108,6 @@ def get_urls(image_tag, term, MAX_COUNT, csv_path, elems):
     print("Stop fetching urls for query {}".format(term))
 
 
-
 def put_images(FILE_NAME):
     urls = []
     with open(FILE_NAME, newline="") as csvfile:
@@ -122,10 +118,12 @@ def put_images(FILE_NAME):
     if not os.path.isdir(os.path.join(os.getcwd(), FILE_NAME.split("_")[0])):
         os.mkdir(FILE_NAME.split("_")[0])
     t0 = time.time()
+    dup_count = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         for url in enumerate(urls):
-            if os.path.exists(os.path.join(os.getcwd(), FILE_NAME.split("_")[0], url[1].split("/")[-1])) or \
-                    os.path.exists(os.path.join(os.getcwd(), "test", url[1].split("/")[-1])):
+            if os.path.exists(os.path.join(os.getcwd(), FILE_NAME.split("_")[0], url[1].split("/")[-1])):
+                dup_count +=1
+                print("already downloaded: {}".format(dup_count))
                 continue
             executor.submit(download_from_url, url)
     t1 = time.time()
@@ -143,7 +141,7 @@ def download_from_url(url):
             resp = requests.get(url[1], stream=True)
             c += 1
         """
-        path_to_write = os.path.join(os.getcwd(), "test", url[1].split("/")[-1])
+        path_to_write = os.path.join(os.getcwd(), "train", url[1].split("/")[-1])
         outfile = open(path_to_write, 'wb')
         outfile.write(resp.content)
         outfile.close()
@@ -153,6 +151,7 @@ def download_from_url(url):
 
 
 def main():
+    """
     elems =pd.read_csv("train_flickr.csv", index_col=0)
     dictionary = PyDictionary()
     synonym_list = []
@@ -170,7 +169,8 @@ def main():
     print("Writing out the urls in the current directory")
     elems.to_csv('train_flickr_t.csv')
     print("Done!!!")
-    #put_images("train_flickr_t.csv")
+    """
+    put_images("train_flickr_t.csv")
     # merge_csvs("train_flickr_diff_t.csv", "train_flickr_diff.csv")
 
 
@@ -191,4 +191,4 @@ if __name__ == '__main__':
     # df.drop_duplicates(subset=['Unnamed: 0'])
     # df.drop_duplicates()
 
-    # df.to_csv('test.csv')
+    # df.to_csv('train.csv')
