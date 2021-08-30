@@ -53,3 +53,14 @@ typing-extensions==3.7.4.3
 urllib3==1.26.4
 Werkzeug==1.0.1
 wrapt==1.12.1
+
+folium~=0.12.1
+tensorflow-gpu~=2.5.0
+ipython~=7.25.0
+goslate~=1.5.1
+PyDictionary~=2.0.1
+flickrapi~=2.4.0
+foursquare~=1!2020.1.30
+googletrans~=2.3.0
+setuptools~=56.1.0
+scikit-learn~=0.24.2
