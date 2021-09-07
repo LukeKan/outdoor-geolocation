@@ -26,7 +26,7 @@ def transpose(matrix):
 
 class Backbone:
 
-    def __init__(self, scale, hierarchy_tree, bs=32, alpha=0.1):
+    def __init__(self, scale, hierarchy_tree, bs=32, alpha=0.9):
         self.bs = bs
         self.scale = scale
         self.model = None
@@ -43,11 +43,13 @@ class Backbone:
         tf.config.experimental.set_memory_growth(gpus[0], True)"""
 
     def sum_smoothed_branch(self, hierarchy_tensors):
-        curr_sum = tf.constant(0., shape=(1, self.out_classes))
+        curr_sum = tf.Variable([[0.]*self.out_classes])
+        print(curr_sum)
         for lvl in range(len(self.lvl_matrices)):
             curr_matrix = np.array(self.lvl_matrices[lvl]).astype(np.float32)
             curr_matrix_tensor = tf.constant(curr_matrix)
-            curr_sum += tf.matmul(hierarchy_tensors[lvl], curr_matrix_tensor)
+            result = tf.matmul(hierarchy_tensors[lvl], curr_matrix_tensor)
+            curr_sum.assign_add(result)
         return curr_sum
 
     """
@@ -80,7 +82,7 @@ class Backbone:
             norm_factor = 0
             for i in range(lvl + 1):
                 norm_factor += pow(alpha, bottom_lvl - i - 1)
-            self.normalizing_factors.insert(0, 1 / norm_factor)
+            self.normalizing_factors.append( 1 / norm_factor)
             while lvl >= 0:
                 curr_lvl_cells = hierarchy_tree[hierarchy_tree["lvl"] == lvl].reset_index()
                 father_cell = curr_lvl_cells[
@@ -127,7 +129,7 @@ class Backbone:
         self.efficient_net.trainable = False
         core = self.efficient_net.output
         core = tf.keras.layers.GlobalMaxPooling2D(name="gmp")(core)
-        core = tf.keras.layers.Dense(1280, kernel_regularizer=l2(0.00001))(core)
+        core = tf.keras.layers.Dense(1280, activation='relu', kernel_regularizer=l2(0.00001))(core)
 
         cell_levels = [None] * len(self.rows_size)
         for i in range(len(self.rows_size)):
@@ -135,13 +137,12 @@ class Backbone:
                 core)
             alpha_current = pow(self.alpha, len(self.rows_size) - i - 1)
             alpha_current = tf.constant(alpha_current)
-            cell_levels[i] = tf.math.scalar_mul(alpha_current, cell_levels[i],
-                                                name="product_normalizing_factor_lvl_" + str(i))
+            cell_levels[i] = tf.keras.layers.Lambda(lambda t: tf.math.scalar_mul(alpha_current, t,
+                                                name="product_normalizing_factor_lvl_" + str(i)))(cell_levels[i])
         sum_weights_hierarchy = tf.keras.layers.Lambda(self.sum_smoothed_branch, name="accumulate_sum_smoothed")(
             cell_levels)
-        smoothed_tensors = tf.multiply(self.normalizing_factors, sum_weights_hierarchy, name="smoothed_branch_output")
-        normalized_tensors = tf.math.l2_normalize(smoothed_tensors, axis=None, epsilon=1e-12,
-                                                  name="normalized_branch_output", dim=None)
+        smoothed_tensors = tf.keras.layers.Multiply()([self.normalizing_factors, sum_weights_hierarchy])
+        normalized_tensors = tf.keras.layers.Lambda(lambda t: tf.linalg.normalize(t))(smoothed_tensors)
 
         self.model = tf.keras.Model(inputs=self.efficient_net.input,
                                     outputs=[normalized_tensors])

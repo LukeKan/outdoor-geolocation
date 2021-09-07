@@ -120,17 +120,28 @@ class DataGenerator:
     def get_image(self, image_id, data_augmentation=False):
 
         path = os.path.join(self.IMAGE_DIR , self.train_dict.iloc[image_id]["img_path"])
-
-        background = Image.open(path).convert('RGB')
+        try:
+            background = Image.open(path).convert('RGB')
+        except:
+            path = os.path.join("E:/dataset/train_1", self.train_dict.iloc[image_id]["img_path"])
+            try:
+                background = Image.open(path).convert('RGB')
+            except:
+                path = path = os.path.join("E:/dataset/train_2", self.train_dict.iloc[image_id]["img_path"])
+                try:
+                    background = Image.open(path).convert('RGB')
+                except:
+                    path = os.path.join("E:/dataset/train_3", self.train_dict.iloc[image_id]["img_path"])
+                    background = Image.open(path).convert('RGB')
         background = background.resize((self.SIZE[1], self.SIZE[0]))
 
         img_array = np.array(background)
         img_array = np.expand_dims(img_array, 0)
         #img_array = img_array / 255.
-        if data_augmentation:
+        """if data_augmentation:
             background = self.mask(background)
             data_agumentations = [self.rotate, self.flip, self.color_augmentation]
-            img_array = random.choice(data_agumentations)(img_array)
+            img_array = random.choice(data_agumentations)(img_array)"""
 
         return img_array
 
@@ -148,7 +159,7 @@ class DataGenerator:
                 ids = np.random.randint(low=0, high=len(self.train_dataset)-1, size=self.bs)
                 for i, id in enumerate(ids):
                     batch_images.extend(self.get_image(id, data_augmentation[i]))
-                    y1[target_index] = self.train_dataset.iloc[id]["lvl_2"]
+                    y1[target_index] = self.train_dataset.iloc[id]["0_30"]
                     #y2[target_index] = self.train_dataset.iloc[id]["lvl_3"]
                     #y3[target_index] = self.train_dataset.iloc[id]["lvl_4"]
                     #y4[target_index] = self.train_dataset.iloc[id]["lvl_5"]
@@ -157,7 +168,7 @@ class DataGenerator:
                 ids = np.random.randint(low=0, high=len(self.valid_dataset)-1, size=self.bs)
                 for i, id in enumerate(ids):
                     batch_images.extend(self.get_image(id, data_augmentation[i]))
-                    y1[target_index] = self.valid_dataset.iloc[id]["lvl_2"]
+                    y1[target_index] = self.valid_dataset.iloc[id]["0_30"]
                     #y2[target_index] = self.valid_dataset.iloc[id]["lvl_3"]
                     #y3[target_index] = self.valid_dataset.iloc[id]["lvl_4"]
                     #y4[target_index] = self.valid_dataset.iloc[id]["lvl_5"]

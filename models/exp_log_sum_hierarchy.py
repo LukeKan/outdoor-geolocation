@@ -127,7 +127,7 @@ class Backbone:
         self.efficient_net.trainable = False
         core = self.efficient_net.output
         core = tf.keras.layers.GlobalMaxPooling2D(name="gmp")(core)
-        core = tf.keras.layers.Dense(1280, kernel_regularizer=l2(0.00001))(core)
+        core = tf.keras.layers.Dense(1280, activation='relu', kernel_regularizer=l2(0.00001))(core)
 
         cell_levels = [None] * len(self.rows_size)
         for i in range(len(self.rows_size)):
@@ -135,7 +135,7 @@ class Backbone:
                 core)
         log_sum_hierarchy = tf.keras.layers.Lambda(self.log_sum_branch, name="log_sum_hierarchy")(
             cell_levels)
-        exp_log_sum_hierarchy = tf.math.exp(log_sum_hierarchy, name="exp_log_sum_hierarchy")
+        exp_log_sum_hierarchy = tf.keras.layers.Dense(self.out_classes, activation="softmax", name="exp_log_sum_hierarchy")(log_sum_hierarchy)
 
         self.model = tf.keras.Model(inputs=self.efficient_net.input,
                                     outputs=[exp_log_sum_hierarchy])

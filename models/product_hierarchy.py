@@ -24,6 +24,22 @@ def transpose(matrix):
     return matrix_T
 
 
+class Product_Branch(tf.keras.layers.Layer):
+    def __init__(self, lvl_matrices, out_classes):
+        super(Product_Branch, self).__init__()
+        self.lvl_matrices = lvl_matrices
+        self.out_classes = out_classes
+        self.curr_product = None
+
+    def call(self, inputs):
+        self.curr_product = tf.ones([32, self.out_classes])
+        for lvl in range(len(self.lvl_matrices)):
+            curr_matrix = np.array(self.lvl_matrices[lvl]).astype(np.float32)
+            curr_matrix_tensor = tf.constant(curr_matrix)
+            self.curr_product *= tf.matmul(inputs[lvl], curr_matrix_tensor)
+        return self.curr_product
+
+
 class Backbone:
 
     def __init__(self, scale, hierarchy_tree, bs=32, alpha=0.1):
@@ -36,21 +52,14 @@ class Backbone:
         self.lvl_matrices = self._build_hierarchy_matrices(hierarchy_tree, alpha)
         self.alpha = alpha
         self.efficient_net = None
+        tf.compat.v1.enable_eager_execution()
         """config = ConfigProto()
         config.gpu_options.allow_growth = True
         session = InteractiveSession(config=config)
         gpus = tf.config.experimental.list_physical_devices('GPU')
         tf.config.experimental.set_memory_growth(gpus[0], True)"""
 
-    def product_branch(self, hierarchy_tensors):
-        curr_product = tf.constant(0., shape=(1, self.out_classes))
-        for lvl in range(len(self.lvl_matrices)):
-            curr_matrix = np.array(self.lvl_matrices[lvl]).astype(np.float32)
-            curr_matrix_tensor = tf.constant(curr_matrix)
-            curr_product = tf.math.multiply(
-                tf.matmul(hierarchy_tensors[lvl], curr_matrix_tensor), curr_product
-            )
-        return curr_product
+
 
     """
     Build a list of matrices for each level of the hierarchy:
@@ -109,9 +118,9 @@ class Backbone:
             one_hot_matrices.append([])
         for branch in hierarchy_matrix:
             for i in range(len(rows_size)):
-                binary_array = [0.] * rows_size[i]
+                binary_array = [0] * rows_size[i]
                 if i < len(branch):
-                    binary_array[branch[i]] = 1.
+                    binary_array[branch[i]] = 1
                 one_hot_matrices[i].append(binary_array)
 
         """
@@ -122,6 +131,15 @@ class Backbone:
         self.rows_size = rows_size
         return one_hot_matrices
 
+    def product_hierarchy(self, inputs):
+        curr_product = tf.ones([32, self.out_classes])
+        for lvl in range(len(self.lvl_matrices)):
+            curr_matrix = np.array(self.lvl_matrices[lvl]).astype(np.float32)
+            curr_matrix_tensor = tf.constant(curr_matrix)
+            curr_product *= tf.matmul(inputs[lvl], curr_matrix_tensor)
+        return curr_product
+
+
     def build(self):
         input_shape = self.scale + (3,)
         self.efficient_net = EfficientNetB4(include_top=False, weights='imagenet', input_shape=input_shape,
@@ -130,24 +148,27 @@ class Backbone:
         core = self.efficient_net.output
 
         core = tf.keras.layers.GlobalMaxPooling2D(name="gmp")(core)
-        core = tf.keras.layers.Dense(1280, kernel_regularizer=l2(0.00001))(core)
+        core = tf.keras.layers.Dense(1280, activation='relu', kernel_regularizer=l2(0.00001))(core)
         cell_levels = [None] * len(self.rows_size)
+        hierarchy_connection = [0] * len(self.rows_size)
         for i in range(len(self.rows_size)):
-            cell_levels[i] = tf.keras.layers.Dense(self.rows_size[i], name="cells_lvl_" + str(i), activation='softmax')(
+            cell_levels[i] = tf.keras.layers.Dense(self.rows_size[i], name="cells_lvl_" + str(i), activation='relu')(
                 core)
-        product_hierarchy = tf.keras.layers.Lambda(self.product_branch, name="product_branch")(
-            cell_levels)
+            hierarchy_connection[i] = tf.constant(np.array(self.lvl_matrices[i]).astype(np.float32))
+            #print(hierarchy_connection)
+            cell_levels[i] = tf.keras.layers.Lambda(lambda x: tf.matmul(x[0], x[1]))([cell_levels[i],hierarchy_connection[i]])
+        product_hierarchy = tf.keras.layers.Multiply()(cell_levels)
         self.model = tf.keras.Model(inputs=self.efficient_net.input,
                                     outputs=[product_hierarchy])
-
         self.model.summary()
 
-    def compile(self, optimizer=Adam(learning_rate=1e-4)):
-        loss = losses.SparseCategoricalCrossentropy()
+    def compile(self, optimizer=Adam(learning_rate=1e-2)):
+        loss = losses.SparseCategoricalCrossentropy(from_logits=True)
         metrics = ['accuracy']
         self.model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
     def train(self, data_gen, checkpoint_path):
+
         callbacks = []
         es_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
         adaptive_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2,
@@ -163,10 +184,10 @@ class Backbone:
         callbacks.append(adaptive_lr)
         # callbacks.append(cp_callback)
         dataset_size = data_gen.train_and_valid_size()
-        train_steps = round(int(dataset_size[0] / self.bs) * 1.3)
+        train_steps = int(dataset_size[0] / self.bs)
         valid_steps = int(dataset_size[1] / self.bs)
         self.model.fit(x=data_gen.generate_batch(train=True), validation_data=data_gen.generate_batch(train=False),
-                       epochs=10, steps_per_epoch=train_steps, validation_steps=valid_steps,
+                       epochs=5, steps_per_epoch=train_steps, validation_steps=valid_steps,
                        callbacks=callbacks)
         self.model.save_weights(checkpoint_path + "ckpt_1.ckpt")
 
@@ -180,7 +201,7 @@ class Backbone:
         return self.model
 
     def unfreeze(self):
-        for layer in self.efficient_net.layers[:-UNFROZEN_LAYERS]:
+        for layer in self.efficient_net.layers[0:-1]:
             if isinstance(layer, layers.BatchNormalization):
                 layer.trainable = False
             else:
