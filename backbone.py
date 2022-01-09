@@ -5,6 +5,7 @@ from tensorflow import losses
 from tensorflow.python.keras.optimizer_v2.adam import Adam
 from tensorflow._api.v2.compat.v1 import ConfigProto
 from tensorflow._api.v2.compat.v1 import InteractiveSession
+from tensorflow.python.framework.ops import disable_eager_execution
 
 
 UNFROZEN_LAYERS = 50
@@ -15,6 +16,12 @@ class Backbone:
         self.scale = scale
         self.model = None
         self.num_classes = 0
+        config = ConfigProto()
+        config.gpu_options.allow_growth = True
+        session = InteractiveSession(config=config)
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        tf.config.experimental.set_memory_growth(gpus[0], True)
+        disable_eager_execution()
 
     def build(self, out_lvls_size):
         input_shape = self.scale + (3,)
@@ -28,7 +35,7 @@ class Backbone:
                 layer.trainable = True"""
         core = self.efficient_net.output
 
-        core = tf.keras.layers.GlobalMaxPooling2D(name="gap")(core)
+        core = tf.keras.layers.GlobalMaxPooling2D(name="gmp")(core)
         core = tf.keras.layers.Dense(1280, kernel_regularizer=l2(0.0001))(core)
         out_lvl2 = tf.keras.layers.Dense(out_lvls_size[0], name="cell_no", activation='softmax')(core)
         self.model = tf.keras.Model(inputs=self.efficient_net.input,

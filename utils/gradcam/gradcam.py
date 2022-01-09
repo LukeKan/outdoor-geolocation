@@ -81,7 +81,7 @@ class GradCAM:
         heatmap = np.uint8(255 * heatmap)
 
         # Use jet colormap to colorize heatmap
-        jet = cm.get_cmap("jet")
+        jet = cm.get_cmap("gray")
 
         # Use RGB values of the colormap
         jet_colors = jet(np.arange(256))[:, :3]
@@ -93,7 +93,7 @@ class GradCAM:
         jet_heatmap = keras.preprocessing.image.img_to_array(jet_heatmap)
 
         # Superimpose the heatmap on original image
-        superimposed_img = jet_heatmap * alpha + img
+        superimposed_img = jet_heatmap * 7 + img
         superimposed_img = keras.preprocessing.image.array_to_img(superimposed_img)
 
         # Save the superimposed image

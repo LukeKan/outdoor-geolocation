@@ -1,4 +1,4 @@
-from flask import Flask, flash, request, redirect, url_for, render_template, send_from_directory
+from flask import Flask, flash, request, redirect, url_for, render_template, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 import os
 import numpy as np
@@ -29,6 +29,7 @@ model.load_weights(latest)
 dataset = pd.read_csv("../dataset/test/test_flickr.csv")
 cell_reference = pd.read_csv("../dataset/crawl/flickr/cell_reference/cells_2000_20000_images_782718_0_30.csv",
                              index_col=False)
+ground_truth_info = pd.read_csv("../dataset/test/test.csv")
 
 # Gradcam model
 gradcam = GradCAM(model, IMG_SIZE)
@@ -50,7 +51,10 @@ def home():
 
 @app.route('/map/<path:path>')
 def load_map(path):
+    if path == "legend.jpg":
+        return send_from_directory('templates/assets/img', path)
     return render_template('map_' + path + '.html', items=[])
+
 
 
 @app.route('/assets/<path:path>')
@@ -83,19 +87,25 @@ def upload():
         return redirect(request.url)
 
 
-@app.route('/random', methods=['POST'])
+@app.route('/random', methods=['GET', 'POST'])
 def random_prediction():
     img = dataset.sample().iloc[0]
     path = os.path.join(BASE_PATH, img["img_path"])
     res = _predict_and_gradcam(path)
-    myMap = drawCellsOnWorldMap([
-        cell_reference[cell_reference["class_label"] == img["lvl_2"]].iloc[0],
-        cell_reference[cell_reference["class_label"] == res.argmax()].iloc[0]
-    ])
+
+    myMap = drawCellsOnWorldMap(
+        ground_truth=cell_reference[cell_reference["class_label"] == img["lvl_2"]].iloc[0],
+        cell_info_arr=cell_reference,
+        alpha_levels=res
+    )
     map_name = img["img_path"].split(".")[0]
     myMap.save("templates/map_" + map_name + ".html")
-    return render_template('index.html', items=["test_img/" + img["img_path"], "test_img/cam.jpg"],
-                           output_label=res.argmax(), scroll='footer', map=map_name)
+    json_return = '{"img-name":' + '"test_img/'
+    json_return += img["img_path"] + '", ' + '"map-name": "' + map_name + '", '
+    json_return += '"top-confidence": "' + max(res) * 100 + '%"}'
+    return json_return
+    """return render_template('index.html', items=["test_img/" + img["img_path"], "test_img/cam.jpg"],
+                           output_label=res.argmax(), scroll='geolocation-predict', map=map_name)"""
 
 
 def allowed_file(filename):
@@ -109,7 +119,7 @@ def predict_uploaded(img_path):
     map_name = img_path.split(".")[0]
     myMap.save("templates/map_" + map_name + ".html")
     return render_template('index.html', items=[UPLOAD_FOLDER + img_path, "test_img/cam.jpg"],
-                           output_label=res.argmax(), scroll='footer', map=map_name)
+                           output_label=res.argmax(), scroll='geolocation-predict', map=map_name)
 
 
 def _predict_and_gradcam(path):

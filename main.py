@@ -8,7 +8,7 @@ from models.product_hierarchy import Backbone
 from dataGenerator import DataGenerator
 
 bs = 32  # Batch size
-img_resize = (240, 240)
+img_resize = (224, 224)
 classes_size = [72]
 DATA_PATH = "E:/dataset"
 
@@ -22,7 +22,7 @@ def main():
     model = Backbone(scale=img_resize, bs=bs, hierarchy_tree=hierarchy, alpha=0.5)
     model.build()
     model.compile()
-    model.train(data_generator, "")
+    #model.train(data_generator, "")
 
 
 if __name__ == '__main__':

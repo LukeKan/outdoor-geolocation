@@ -8,11 +8,11 @@ import tensorflow as tf
 from PIL import Image, ImageEnhance, ImageFile
 from sklearn.model_selection import train_test_split
 
-SIZE = (240, 240)
+SIZE = (224, 224)
 
 
 class DataGenerator:
-    SIZE = (240, 240)
+    SIZE = (224, 224)
 
     def __init__(self, csv_train_path, image_dir, bs, classes_size, samples_number):
         self.bs = bs

@@ -3,9 +3,11 @@ import numpy as np
 from keras.regularizers import l2
 from tensorflow.python.keras.applications.efficientnet import EfficientNetB4, layers
 from tensorflow import losses
-from tensorflow.python.keras.optimizer_v2.adam import Adam
+from keras.optimizer_v2.adam import Adam
+from keras import backend as K
 from tensorflow._api.v2.compat.v1 import ConfigProto
 from tensorflow._api.v2.compat.v1 import InteractiveSession
+from tensorflow.python.framework.ops import disable_eager_execution
 
 UNFROZEN_LAYERS = 50
 
@@ -36,11 +38,12 @@ class Backbone:
         self.lvl_matrices = self._build_hierarchy_matrices(hierarchy_tree, alpha)
         self.alpha = alpha
         self.efficient_net = None
-        """config = ConfigProto()
+        config = ConfigProto()
         config.gpu_options.allow_growth = True
         session = InteractiveSession(config=config)
         gpus = tf.config.experimental.list_physical_devices('GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)"""
+        tf.config.experimental.set_memory_growth(gpus[0], True)
+        disable_eager_execution()
 
     def log_sum_branch(self, hierarchy_tensors):
         curr_sum = tf.constant(0., shape=(1, self.out_classes))
@@ -95,7 +98,7 @@ class Backbone:
                 lvl -= 1
             hierarchy_matrix.append(curr_branch)
             curr_branch = []
-
+        self.hierarchy_matrix = hierarchy_matrix
         self.normalizing_factors = np.array(self.normalizing_factors).astype(np.float32)
 
         rows_size = []
@@ -103,14 +106,17 @@ class Backbone:
             rows_size.insert(0, hierarchy_tree[hierarchy_tree["lvl"] == lvl].shape[0])
 
         one_hot_matrices = []
+        epsilon = 1e-2
         for i in range(bottom_lvl + 1):
             one_hot_matrices.append([])
         for branch in hierarchy_matrix:
             for i in range(len(rows_size)):
-                binary_array = [0.] * rows_size[i]
+                binary_array = [epsilon] * rows_size[i]
+
                 if i < len(branch):
                     binary_array[branch[i]] = 1.
                 one_hot_matrices[i].append(binary_array)
+
 
         """
         Transpose matrices
@@ -127,18 +133,24 @@ class Backbone:
         self.efficient_net.trainable = False
         core = self.efficient_net.output
         core = tf.keras.layers.GlobalMaxPooling2D(name="gmp")(core)
-        core = tf.keras.layers.Dense(1280, activation='relu', kernel_regularizer=l2(0.00001))(core)
+        core = tf.keras.layers.Dense(1280, activation='relu')(core)
 
+        hierarchy_connection = [0] * len(self.rows_size)
         cell_levels = [None] * len(self.rows_size)
         for i in range(len(self.rows_size)):
             cell_levels[i] = tf.keras.layers.Dense(self.rows_size[i], name="cells_lvl_" + str(i), activation='softmax')(
                 core)
-        log_sum_hierarchy = tf.keras.layers.Lambda(self.log_sum_branch, name="log_sum_hierarchy")(
-            cell_levels)
-        exp_log_sum_hierarchy = tf.keras.layers.Dense(self.out_classes, activation="softmax", name="exp_log_sum_hierarchy")(log_sum_hierarchy)
+            hierarchy_connection[i] = tf.constant(self.lvl_matrices[i])
+            cell_levels[i] = tf.keras.layers.Lambda(lambda x:
+                                                    K.dot(x[0], x[1]))([cell_levels[i], hierarchy_connection[i]])
+            cell_levels[i] = tf.math.log(cell_levels[i])
+        log_sum_hierarchy = tf.keras.layers.Add()(cell_levels)
+        exp_log_sum_hierarchy = tf.math.exp(log_sum_hierarchy)
+        output = tf.keras.layers.Dense(self.out_classes, activation="softmax", name="exp_log_sum_hierarchy")\
+            (exp_log_sum_hierarchy)
 
         self.model = tf.keras.Model(inputs=self.efficient_net.input,
-                                    outputs=[exp_log_sum_hierarchy])
+                                    outputs=[output])
         self.model.summary()
 
     def compile(self, optimizer=Adam(learning_rate=1e-4)):

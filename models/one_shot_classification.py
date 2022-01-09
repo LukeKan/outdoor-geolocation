@@ -5,6 +5,7 @@ import tensorflow as tf
 import pandas as pd
 import numpy as np
 from keras import layers
+from keras.regularizers import l2
 from tensorflow.python.keras import Sequential
 from tensorflow.python.keras.applications.efficientnet import EfficientNetB2, \
     EfficientNetB1
@@ -36,15 +37,10 @@ class Backbone:
         input_shape = self.scale + (3,)
         efficient_net = EfficientNetB1(include_top=False, weights='imagenet', input_shape=input_shape)
         efficient_net.trainable = False
-        for layer in efficient_net.layers[:-UNFROZEN_LAYERS]:
-            if isinstance(layer, layers.BatchNormalization):
-                layer.trainable = False
-            else:
-                layer.trainable = True
         core = efficient_net.output
 
         core = tf.keras.layers.GlobalMaxPooling2D(name="gap")(core)
-        #core = tf.keras.layers.BatchNormalization()(core)
+        #core = tf.keras.layers.Dense(1280, activation='relu', kernel_regularizer=l2(0.00001))(core)
         out_lvl2 = tf.keras.layers.Dense(out_lvls_size[0], name="cell_no", activation='softmax')(core)
         self.model = tf.keras.Model(inputs=efficient_net.input,
                                     outputs=[out_lvl2])
@@ -56,15 +52,34 @@ class Backbone:
         metrics = ['accuracy']
         self.model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
-    def train(self, data_gen):
+    def train(self, data_gen, checkpoint_path):
         callbacks = []
         es_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3)
-        adaptive_lr = tf.keras.callbacks.ReduceLROnPlateau()
+        adaptive_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2,
+                                                           patience=3, min_lr=0.000001)
+        cp_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=checkpoint_path,
+            verbose=1,
+            save_weights_only=True,
+            monitor='val_accuracy',
+            mode='max',
+            save_best_only=True)
         callbacks.append(es_callback)
         callbacks.append(adaptive_lr)
+        # callbacks.append(cp_callback)
         dataset_size = data_gen.train_and_valid_size()
-        train_steps = int(dataset_size[0] / self.bs)
+        train_steps = round(int(dataset_size[0] / self.bs) * 1.3)
         valid_steps = int(dataset_size[1] / self.bs)
         self.model.fit(x=data_gen.generate_batch(train=True), validation_data=data_gen.generate_batch(train=False),
-                       epochs=5, steps_per_epoch=train_steps, validation_steps=valid_steps,
+                       epochs=1, steps_per_epoch=train_steps/2, validation_steps=valid_steps,
                        callbacks=callbacks)
+        self.model.save_weights(checkpoint_path + "ckpt_1.ckpt")
+
+    def save_weights(self, path):
+        self.model.save(path)
+
+    def load_weights(self, weights_path):
+        self.model.load_weights(weights_path)
+
+    def get_model(self):
+        return self.model

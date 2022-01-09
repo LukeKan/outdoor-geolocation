@@ -4,6 +4,7 @@ from keras.regularizers import l2
 from tensorflow.python.keras.applications.efficientnet import EfficientNetB4, layers
 from tensorflow import losses
 from tensorflow.python.keras.optimizer_v2.adam import Adam
+from keras import backend as K
 from tensorflow._api.v2.compat.v1 import ConfigProto
 from tensorflow._api.v2.compat.v1 import InteractiveSession
 
@@ -36,11 +37,11 @@ class Backbone:
         self.lvl_matrices = self._build_hierarchy_matrices(hierarchy_tree, alpha)
         self.alpha = alpha
         self.efficient_net = None
-        """config = ConfigProto()
+        config = ConfigProto()
         config.gpu_options.allow_growth = True
         session = InteractiveSession(config=config)
         gpus = tf.config.experimental.list_physical_devices('GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)"""
+        tf.config.experimental.set_memory_growth(gpus[0], True)
 
     def sum_smoothed_branch(self, hierarchy_tensors):
         curr_sum = tf.Variable([[0.]*self.out_classes])
@@ -98,18 +99,18 @@ class Backbone:
             hierarchy_matrix.append(curr_branch)
             curr_branch = []
 
-        self.normalizing_factors = np.array(self.normalizing_factors).astype(np.float32)
-
         rows_size = []
         for lvl in range(bottom_lvl, -1, -1):
             rows_size.insert(0, hierarchy_tree[hierarchy_tree["lvl"] == lvl].shape[0])
 
         one_hot_matrices = []
+        epsilon = 1e-2
         for i in range(bottom_lvl + 1):
             one_hot_matrices.append([])
         for branch in hierarchy_matrix:
             for i in range(len(rows_size)):
-                binary_array = [0.] * rows_size[i]
+                binary_array = [epsilon] * rows_size[i]
+
                 if i < len(branch):
                     binary_array[branch[i]] = 1.
                 one_hot_matrices[i].append(binary_array)
@@ -125,12 +126,14 @@ class Backbone:
     def build(self):
         input_shape = self.scale + (3,)
         self.efficient_net = EfficientNetB4(include_top=False, weights='imagenet', input_shape=input_shape,
-                                            drop_connect_rate=0.4)
+                                            drop_connect_rate=0.5)
         self.efficient_net.trainable = False
         core = self.efficient_net.output
+        core = tf.keras.layers.Dropout(0.5)(core)
         core = tf.keras.layers.GlobalMaxPooling2D(name="gmp")(core)
         core = tf.keras.layers.Dense(1280, activation='relu', kernel_regularizer=l2(0.00001))(core)
 
+        hierarchy_connection = [None] * len(self.rows_size)
         cell_levels = [None] * len(self.rows_size)
         for i in range(len(self.rows_size)):
             cell_levels[i] = tf.keras.layers.Dense(self.rows_size[i], name="cells_lvl_" + str(i), activation='softmax')(
@@ -139,13 +142,17 @@ class Backbone:
             alpha_current = tf.constant(alpha_current)
             cell_levels[i] = tf.keras.layers.Lambda(lambda t: tf.math.scalar_mul(alpha_current, t,
                                                 name="product_normalizing_factor_lvl_" + str(i)))(cell_levels[i])
-        sum_weights_hierarchy = tf.keras.layers.Lambda(self.sum_smoothed_branch, name="accumulate_sum_smoothed")(
-            cell_levels)
-        smoothed_tensors = tf.keras.layers.Multiply()([self.normalizing_factors, sum_weights_hierarchy])
-        normalized_tensors = tf.keras.layers.Lambda(lambda t: tf.linalg.normalize(t))(smoothed_tensors)
+            hierarchy_connection[i] = tf.constant(self.lvl_matrices[i])
+            cell_levels[i] = tf.keras.layers.Lambda(lambda x:
+                                                    K.dot(x[0], x[1]))([cell_levels[i], hierarchy_connection[i]])
+        sum_weights_hierarchy = tf.keras.layers.Add(name="accumulate_sum_smoothed")(cell_levels)
+        normalizing_tensor = tf.constant([self.normalizing_factors] * 32)
+        smoothed_tensors = tf.keras.layers.Multiply()([normalizing_tensor, sum_weights_hierarchy])
+        output = tf.keras.layers.Dense(self.out_classes, name="output", activation='softmax')(
+                smoothed_tensors)
 
         self.model = tf.keras.Model(inputs=self.efficient_net.input,
-                                    outputs=[normalized_tensors])
+                                    outputs=[output])
         self.model.summary()
 
     def compile(self, optimizer=Adam(learning_rate=1e-4)):
@@ -165,7 +172,7 @@ class Backbone:
             monitor='val_accuracy',
             mode='max',
             save_best_only=True)
-        # callbacks.append(es_callback)
+        callbacks.append(es_callback)
         callbacks.append(adaptive_lr)
         # callbacks.append(cp_callback)
         dataset_size = data_gen.train_and_valid_size()
